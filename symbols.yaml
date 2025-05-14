@@ -1,0 +1,75 @@
+ES:
+  id: usa500idxusd
+  name: USA 500 Index
+  earliest_date: '1980-01-02'
+  location: USA
+NQ:
+  id: usatechidxusd
+  name: USA 100 Technical Index
+  earliest_date: '1990-11-07'
+  location: USA
+DAX:
+  id: deuidxeur
+  name: Germany 40 Index
+  earliest_date: '2013-01-01'
+  location: Germany
+FRA40:
+  id: fraidxeur
+  name: France 40 Index
+  earliest_date: '1987-12-31'
+  location: France
+FTSE:
+  id: gbridxgbp
+  name: UK 100 Index
+  earliest_date: '1988-04-05'
+  location: UK
+EU50:
+  id: eusidxeur
+  name: Europe 50 Index
+  earliest_date: '2014-06-02'
+  location: Europe
+SPA35:
+  id: espidxeur
+  name: Spain 35 Index
+  earliest_date: '2014-06-02'
+  location: Spain
+SWI20:
+  id: cheidxchf
+  name: Switzerland 20 Index
+  earliest_date: '1992-01-03'
+  location: Switzerland
+ITA40:
+  id: itaidxeur
+  name: Italy 40 Index
+  earliest_date: '2016-07-29'
+  location: Italy
+NLD25:
+  id: nldidxeur
+  name: Netherlands 25 Index
+  earliest_date: '2017-12-01'
+  location: Netherlands
+POL20:
+  id: plnidxpln
+  name: Poland 20 Index
+  earliest_date: '2017-12-01'
+  location: Poland
+DXY:
+  id: dollaridxusd
+  name: US Dollar Index
+  earliest_date: '2017-12-01'
+  location: USA
+DJIA:
+  id: usa30idxusd
+  name: USA 30 Index
+  earliest_date: '2013-01-01'
+  location: USA
+RUT:
+  id: ussc2000idxusd
+  name: US Small Cap 2000
+  earliest_date: '2018-08-08'
+  location: USA
+VIX:
+  id: volidxusd
+  name: Volatility Index
+  earliest_date: '2022-10-05'
+  location: USA
