@@ -1,0 +1,60 @@
+name: Dukascopy gap-fill
+
+on:
+  schedule:
+    - cron: '30 1 * * *'    # Every day at 01:30 UTC
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_KEY:       ${{ secrets.MINIO_KEY }}
+      MINIO_SECRET:    ${{ secrets.MINIO_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python + node + tools
+        run: |
+          pip install pandas pyarrow pyyaml yq
+          npm install -g dukascopy-node
+          curl -s https://dl.min.io/client/mc/release/linux-amd64/mc \
+               -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+          mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+
+      - name: List newest parquet keys
+        id: newest
+        run: |
+          SYMS=$(yq 'keys | join(",")' symbols.yaml)
+          echo "SYMS=$SYMS" >> $GITHUB_ENV
+
+          for S in ${SYMS//,/ }; do
+            LAST=$(mc ls --json myminio/ohlcv_1m/symbol=$S/ \
+                  | jq -r 'select(.key|test("date=.*\\.parquet$")) | .key' \
+                  | sort | tail -n1)
+            DATE=${LAST##*date=}
+            DATE=${DATE%.parquet}
+            echo "$S=$DATE" >> $GITHUB_OUTPUT
+          done
+
+      - name: Run daily_ingest.py
+        run: |
+          ARGS=""
+          for kv in ${{ steps.newest.outputs.* }}; do
+            SYM=${kv%%=*}
+            FROM=${kv#*=}
+            if [[ -n "$FROM" && "$FROM" != "$SYM" ]]; then
+              NEXT=$(python -c "from datetime import date, timedelta; d=date.fromisoformat('$FROM'); print(d + timedelta(days=1))")
+              ARGS+=" --symbols $SYM --from $NEXT"
+            else
+              ARGS+=" --symbols $SYM"
+            fi
+          done
+          python daily_ingest.py $ARGS
+
+      - name: Sync new parquet to MinIO
+        run: |
+          mc mirror --overwrite ohlcv_1m/ myminio/ohlcv_1m/
