@@ -28,7 +28,7 @@ jobs:
       - name: Run daily_ingest.py (dynamic per-symbol range)
         run: |
           # Read symbols from YAML (newline-safe)
-          SYMS=$(yq 'keys | .[]' symbols.yaml)
+          SYMS=$(yq 'keys | .[]' symbols.yaml | tr -d '"')
 
           for SYMBOL in $SYMS; do
             # Get the newest date file in MinIO for this symbol
