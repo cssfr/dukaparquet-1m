@@ -25,35 +25,18 @@ jobs:
                -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
           mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
 
-      - name: List newest parquet keys
-        id: newest
-        run: |
-          SYMS=$(yq 'keys | join(",")' symbols.yaml)
-          echo "SYMS=$SYMS" >> $GITHUB_ENV
-
-          for S in ${SYMS//,/ }; do
-            LAST=$(mc ls --json myminio/dukascopy-node/ohlcv_1m/symbol=$S/ \
-                  | jq -r 'select(.key|test("date=.*\\.parquet$")) | .key' \
-                  | sort | tail -n1)
-            DATE=${LAST##*date=}
-            DATE=${DATE%.parquet}
-            echo "$S=$DATE" >> $GITHUB_OUTPUT
-          done
-      ###      
       - name: Run daily_ingest.py (dynamic per-symbol range)
         run: |
-          # Read symbols from YAML
+          # Read symbols from YAML (newline-safe)
           SYMS=$(yq 'keys | .[]' symbols.yaml)
-      #   SYMS=$(yq 'keys | join(" ")' symbols.yaml)
-          
+
           for SYMBOL in $SYMS; do
             # Get the newest date file in MinIO for this symbol
             LAST=$(mc ls --json myminio/dukascopy-node/ohlcv_1m/symbol=$SYMBOL/ \
               | jq -r 'select(.key | test("date=.*\\.parquet$")) | .key' \
               | sort | tail -n1)
-              
+
             if [[ -n "$LAST" ]]; then
-              # Extract date part and advance by 1 day
               DATE=${LAST##*date=}
               DATE=${DATE%.parquet}
               NEXT_DATE=$(python -c "from datetime import date, timedelta; d = date.fromisoformat('$DATE'); print(d + timedelta(days=1))")
@@ -64,12 +47,6 @@ jobs:
               python daily_ingest.py --symbols $SYMBOL
             fi
           done
-      ###
-      #- name: Run daily_ingest.py
-      #  run: |
-          # Force test ingestion of ES from a known early date
-      #    python daily_ingest.py --symbols ES --from 2022-01-01
-       
 
       - name: Sync new parquet to MinIO
         run: |
