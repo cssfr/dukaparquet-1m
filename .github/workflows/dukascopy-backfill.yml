@@ -1,0 +1,35 @@
+
+name: Dukascopy Backfill
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_KEY:       ${{ secrets.MINIO_KEY }}
+      MINIO_SECRET:    ${{ secrets.MINIO_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          pip install pandas pyarrow pyyaml
+          npm install -g dukascopy-node
+          curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+          chmod +x /usr/local/bin/mc
+          mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+          mc mirror myminio/dukascopy-node/ohlcv_1m/ ohlcv_1m/ --overwrite
+
+      - name: Run backlog script
+        run: python backfill_missing.py
+
+      - name: Upload backfilled parquet
+        run: |
+          if [ -d ohlcv_1m ]; then
+            mc mirror --overwrite ohlcv_1m/ myminio/dukascopy-node/ohlcv_1m/
+          fi
