@@ -42,18 +42,21 @@ jobs:
 
       - name: Run daily_ingest.py
         run: |
-          ARGS=""
-          for kv in ${{ steps.newest.outputs.* }}; do
-            SYM=${kv%%=*}
-            FROM=${kv#*=}
-            if [[ -n "$FROM" && "$FROM" != "$SYM" ]]; then
-              NEXT=$(python -c "from datetime import date, timedelta; d=date.fromisoformat('$FROM'); print(d + timedelta(days=1))")
-              ARGS+=" --symbols $SYM --from $NEXT"
-            else
-              ARGS+=" --symbols $SYM"
-            fi
-          done
-          python daily_ingest.py $ARGS
+          # Force test ingestion of ES from a known early date
+          python daily_ingest.py --symbols ES --from 2022-01-01
+        #run: |
+        #  ARGS=""
+        #  for kv in ${{ steps.newest.outputs.* }}; do
+        #    SYM=${kv%%=*}
+        #    FROM=${kv#*=}
+        #    if [[ -n "$FROM" && "$FROM" != "$SYM" ]]; then
+        #      NEXT=$(python -c "from datetime import date, timedelta; d=date.fromisoformat('$FROM'); print(d + timedelta(days=1))")
+        #      ARGS+=" --symbols $SYM --from $NEXT"
+        #    else
+        #      ARGS+=" --symbols $SYM"
+        #    fi
+        #  done
+        #  python daily_ingest.py $ARGS
 
       - name: Sync new parquet to MinIO
         run: |
