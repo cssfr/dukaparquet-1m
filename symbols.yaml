@@ -1,7 +1,7 @@
 ES:
   id: usa500idxusd
   name: USA 500 Index
-  earliest_date: '2024-01-01'
+  earliest_date: '2023-01-01'
   location: USA
 NQ:
   id: usatechidxusd
