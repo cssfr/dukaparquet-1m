@@ -23,7 +23,6 @@ jobs:
           curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
           chmod +x /usr/local/bin/mc
           mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
-          mc mirror myminio/dukascopy-node/ohlcv_1m/ ohlcv_1m/ --overwrite
 
       - name: Run backlog script
         run: python backfill_missing.py

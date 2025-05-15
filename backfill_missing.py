@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 
 import subprocess
-import time
 from datetime import datetime, timedelta, date
 from pathlib import Path
 import yaml
 import pandas as pd
+import json
 
 OUTPUT_DIR = Path("ohlcv_1m")
 DOWNLOAD_DIR = Path("download")
@@ -34,20 +34,29 @@ def run_dukascopy(symbol_id: str, date_str: str):
         "-to", (datetime.fromisoformat(date_str) + timedelta(days=1)).strftime("%Y-%m-%d"),
         "-t", "m1",
         "-f", "csv",
-        '--date-format "YYYY-MM-DD HH:mm"',
+        '--date-format \"YYYY-MM-DD HH:mm\"',
         "-v",
         "-fl",
     ]
     subprocess.run(" ".join(cmd), check=True, shell=True)
 
-def list_parquet_dates(symbol_key: str) -> list[date]:
-    folder = OUTPUT_DIR / f"symbol={symbol_key}"
-    if not folder.exists():
-        return []
-    return [
-        datetime.strptime(p.name.split("=")[1].split(".")[0], "%Y-%m-%d").date()
-        for p in folder.glob("date=*.parquet")
-    ]
+def list_parquet_dates_remote(symbol_key: str):
+    # List remote objects and parse dates
+    proc = subprocess.run(
+        ["mc", "ls", "--json", f"myminio/dukascopy-node/ohlcv_1m/symbol={symbol_key}/"],
+        capture_output=True, text=True, check=True
+    )
+    dates = []
+    for line in proc.stdout.splitlines():
+        obj = json.loads(line)
+        key = obj.get("key", "")
+        if "date=" in key and key.endswith(".parquet"):
+            part = key.split("date=")[1].split(".")[0]
+            try:
+                dates.append(datetime.strptime(part, "%Y-%m-%d").date())
+            except ValueError:
+                pass
+    return dates
 
 def ingest_symbol_backfill(symbol_key: str, earliest_required: date, earliest_available: date):
     meta = SYMBOLS[symbol_key]
@@ -79,19 +88,18 @@ def ingest_symbol_backfill(symbol_key: str, earliest_required: date, earliest_av
         current += timedelta(days=1)
 
 def main():
-    utc_today = datetime.utcnow().date()
     for symbol in SYMBOLS:
         earliest_required = datetime.strptime(SYMBOLS[symbol]["earliest_date"], "%Y-%m-%d").date()
-        existing_dates = list_parquet_dates(symbol)
+        existing_dates = list_parquet_dates_remote(symbol)
         if not existing_dates:
-            print(f"[{symbol}] No existing files. Skip.")
+            print(f"[{symbol}] No existing parquet; skipping backfill.")
             continue
         earliest_available = min(existing_dates)
         if earliest_required < earliest_available:
             print(f"[{symbol}] Backfilling {earliest_required} to {earliest_available - timedelta(days=1)}")
             ingest_symbol_backfill(symbol, earliest_required, earliest_available)
         else:
-            print(f"[{symbol}] Already has full history. Nothing to backfill.")
+            print(f"[{symbol}] Already has full history; nothing to backfill.")
 
 if __name__ == "__main__":
     main()
