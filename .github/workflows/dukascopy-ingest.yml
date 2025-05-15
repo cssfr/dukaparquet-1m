@@ -43,14 +43,15 @@ jobs:
       - name: Run daily_ingest.py (dynamic per-symbol range)
         run: |
           # Read symbols from YAML
-          SYMS=$(yq 'keys | join(" ")' symbols.yaml)
-      
+          SYMS=$(yq 'keys | .[]' symbols.yaml)
+      #   SYMS=$(yq 'keys | join(" ")' symbols.yaml)
+          
           for SYMBOL in $SYMS; do
             # Get the newest date file in MinIO for this symbol
             LAST=$(mc ls --json myminio/dukascopy-node/ohlcv_1m/symbol=$SYMBOL/ \
               | jq -r 'select(.key | test("date=.*\\.parquet$")) | .key' \
               | sort | tail -n1)
-      
+              
             if [[ -n "$LAST" ]]; then
               # Extract date part and advance by 1 day
               DATE=${LAST##*date=}
@@ -68,19 +69,7 @@ jobs:
       #  run: |
           # Force test ingestion of ES from a known early date
       #    python daily_ingest.py --symbols ES --from 2022-01-01
-        #run: |
-        #  ARGS=""
-        #  for kv in ${{ steps.newest.outputs.* }}; do
-        #    SYM=${kv%%=*}
-        #    FROM=${kv#*=}
-        #    if [[ -n "$FROM" && "$FROM" != "$SYM" ]]; then
-        #      NEXT=$(python -c "from datetime import date, timedelta; d=date.fromisoformat('$FROM'); print(d + timedelta(days=1))")
-        #      ARGS+=" --symbols $SYM --from $NEXT"
-        #    else
-        #      ARGS+=" --symbols $SYM"
-        #    fi
-        #  done
-        #  python daily_ingest.py $ARGS
+       
 
       - name: Sync new parquet to MinIO
         run: |
