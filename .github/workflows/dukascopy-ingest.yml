@@ -32,7 +32,7 @@ jobs:
           echo "SYMS=$SYMS" >> $GITHUB_ENV
 
           for S in ${SYMS//,/ }; do
-            LAST=$(mc ls --json myminio/ohlcv_1m/symbol=$S/ \
+            LAST=$(mc ls --json myminio/dukascopy-node/ohlcv_1m/symbol=$S/ \
                   | jq -r 'select(.key|test("date=.*\\.parquet$")) | .key' \
                   | sort | tail -n1)
             DATE=${LAST##*date=}
@@ -60,4 +60,4 @@ jobs:
 
       - name: Sync new parquet to MinIO
         run: |
-          mc mirror --overwrite ohlcv_1m/ myminio/ohlcv_1m/
+          mc mirror --overwrite ohlcv_1m/ myminio/dukascopy-node/ohlcv_1m/
