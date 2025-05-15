@@ -26,5 +26,5 @@ DJIA:
 RUT:
   id: ussc2000idxusd
   name: US Small Cap 2000
-  earliest_date: '2024-12-01'
+  earliest_date: '2024-11-29'
   location: USA
