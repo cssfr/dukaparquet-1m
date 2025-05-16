@@ -36,7 +36,7 @@ GOLD:
 BTC:
   id: btcusd
   name: Bitcoin vs US Dollar
-  earliest_date: '2022-05-08'
+  earliest_date: '2017-05-08'
   location: USA
 VIX:
   id: volidxusd
