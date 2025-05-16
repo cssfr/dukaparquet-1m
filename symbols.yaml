@@ -31,15 +31,15 @@ RUT:
 GOLD:
   id: xauusd
   name: Spot gold
-  earliest_date: '2003-05-06'
+  earliest_date: '2025-05-06'
   location: USA
 BTC:
   id: btcusd
   name: Bitcoin vs US Dollar
-  earliest_date: '2017-05-08'
+  earliest_date: '2025-05-08'
   location: USA
 VIX:
   id: volidxusd
   name: Volatility Index
-  earliest_date: '2022-10-06'
+  earliest_date: '2025-05-06'
   location: USA
