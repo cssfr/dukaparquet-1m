@@ -41,5 +41,5 @@ BTC:
 VIX:
   id: volidxusd
   name: Volatility Index
-  earliest_date: '2025-05-06'
+  earliest_date: '2022-05-06'
   location: USA
