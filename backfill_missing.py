@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 import pandas as pd
 import json
+import numpy as np
 
 OUTPUT_DIR = Path("ohlcv/1m")
 DOWNLOAD_DIR = Path("download")
@@ -15,14 +16,14 @@ SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
 
 def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: str):
     df = pd.read_csv(str(input_csv_path))
-    
-    # Define expected schema for comprehensive casting
+
+    # Define expected schema for comprehensive casting using numpy types
     schema_mapping = {
-        'open': 'float64',
-        'high': 'float64', 
-        'low': 'float64',
-        'close': 'float64',
-        'volume': 'float64'
+        'open': np.float64,
+        'high': np.float64, 
+        'low': np.float64,
+        'close': np.float64,
+        'volume': np.float64
     }
     
     # Apply schema casting for all expected columns
@@ -32,7 +33,7 @@ def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: 
     
     # Ensure UTC, independent of machine timezone
     df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M', utc=True)
-    df['unix_time'] = df['timestamp'].astype('int64') // 10**9
+    df['unix_time'] = df['timestamp'].astype(np.int64) // 10**9
     
     df.insert(0, 'symbol', symbol)
     cols = df.columns.tolist()
