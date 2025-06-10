@@ -58,7 +58,7 @@ def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: 
     df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M', utc=True)
 
     # Add unix epoch seconds
-    df['unix_time'] = df['timestamp'].astype('int64') // 10**9
+    df['unix_time'] = df['timestamp'].astype(np.int64) // 10**9
 
     # Insert symbol column at position 0
     df.insert(0, 'symbol', symbol)
