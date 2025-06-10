@@ -74,17 +74,41 @@ def smart_download_for_symbol(symbol: str) -> None:
         cmd = [
             "mc", "mirror",
             "--exclude", "*",
-            "--include", include_pattern,
             "myminio/dukascopy-node/ohlcv/1m/",
             "ohlcv/1m/"
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         
-        if result.returncode == 0:
-            print(f"[{symbol}] ✅ Smart download completed")
-        else:
-            print(f"[{symbol}] ⚠️  Download completed with warnings: {result.stderr}")
+        # Alternative approach: use mc cp for specific date ranges
+        print(f"[{symbol}] Using mc cp for specific date range: {date_pattern}")
+        
+        # Calculate specific dates to copy
+        current_date = start_date
+        files_copied = 0
+        
+        while current_date <= end_date:
+            date_str = current_date.strftime("%Y-%m-%d")
+            src_path = f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol}/date={date_str}/{symbol}_{date_str}.parquet"
+            dst_dir = f"ohlcv/1m/symbol={symbol}/date={date_str}"
+            
+            # Check if file exists and copy it
+            check_cmd = ["mc", "stat", src_path]
+            check_result = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
+            
+            if check_result.returncode == 0:
+                # File exists, copy it
+                subprocess.run(["mkdir", "-p", dst_dir], check=False)
+                copy_cmd = ["mc", "cp", src_path, f"{dst_dir}/"]
+                copy_result = subprocess.run(copy_cmd, capture_output=True, text=True, check=False)
+                if copy_result.returncode == 0:
+                    files_copied += 1
+                    print(f"[{symbol}] ✓ Downloaded {date_str}")
+                else:
+                    print(f"[{symbol}] ⚠️  Failed to copy {date_str}: {copy_result.stderr}")
+            
+            current_date += timedelta(days=1)
+        
+        print(f"[{symbol}] ✅ Smart download completed: {files_copied} files copied")
             
     except Exception as e:
         print(f"[{symbol}] ❌ Download error: {str(e)}")
