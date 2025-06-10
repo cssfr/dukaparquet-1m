@@ -20,7 +20,7 @@ from pathlib import Path
 import argparse
 import yaml
 import pandas as pd
-import numpy as np  # Add numpy import
+import numpy as np
 
 # -----------------------------------------------------------------------------
 #  Paths & config
@@ -57,8 +57,8 @@ def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: 
     # Ensure UTC, independent of machine timezone
     df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M', utc=True)
 
-    # Add unix epoch seconds using numpy type
-    df['unix_time'] = df['timestamp'].astype(np.int64) // 10**9
+    # Add unix epoch seconds
+    df['unix_time'] = df['timestamp'].astype('int64') // 10**9
 
     # Insert symbol column at position 0
     df.insert(0, 'symbol', symbol)

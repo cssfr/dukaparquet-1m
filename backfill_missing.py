@@ -16,7 +16,7 @@ SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
 
 def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: str):
     df = pd.read_csv(str(input_csv_path))
-
+    
     # Define expected schema for comprehensive casting using numpy types
     schema_mapping = {
         'open': np.float64,
@@ -65,10 +65,10 @@ def list_parquet_dates_remote(symbol_key: str):
     for line in proc.stdout.splitlines():
         obj = json.loads(line)
         key = obj.get("key", "")
-        # New structure: date=YYYY-MM-DD/SYMBOL_YYYY-MM-DD.parquet
-        if "date=" in key and key.endswith(".parquet"):
-            # Extract date from path like "date=2017-05-08/BTC_2017-05-08.parquet"
-            date_part = key.split("date=")[1].split("/")[0]
+        # New structure: look for date directories date=YYYY-MM-DD/
+        if "date=" in key and key.endswith("/"):
+            # Extract date from path like "date=2017-05-08/"
+            date_part = key.split("date=")[1].rstrip("/")
             try:
                 dates.append(datetime.strptime(date_part, "%Y-%m-%d").date())
             except ValueError:
