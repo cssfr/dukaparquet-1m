@@ -78,6 +78,8 @@ def smart_download_for_symbol(symbol: str) -> None:
             "ohlcv/1m/"
         ]
         
+        # Add specific include pattern using multiple excludes (workaround)
+        # Since mc doesn't support --include, we'll use mc cp with specific paths
         
         # Alternative approach: use mc cp for specific date ranges
         print(f"[{symbol}] Using mc cp for specific date range: {date_pattern}")
