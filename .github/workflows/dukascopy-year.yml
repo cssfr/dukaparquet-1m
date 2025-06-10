@@ -1,0 +1,67 @@
+name: Dukascopy Yearly Consolidation
+on:
+  workflow_run:
+    workflows: ["Dukascopy gap-fill 1m"]  # Must match exactly the name in dukascopy-ingest.yml
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:  # Keep manual trigger for testing
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    # Only run if daily ingest was successful
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_KEY:       ${{ secrets.MINIO_KEY }}
+      MINIO_SECRET:    ${{ secrets.MINIO_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Report trigger status
+        run: |
+          echo "Triggered by workflow: ${{ github.event.workflow_run.workflow_id }}"
+          echo "Daily ingest status: ${{ github.event.workflow_run.conclusion }}"
+          echo "Daily ingest run: ${{ github.event.workflow_run.html_url }}"
+      
+      - name: Install tools and dependencies
+        run: |
+          pip install polars pyarrow pyyaml yq
+          curl -s https://dl.min.io/client/mc/release/linux-amd64/mc \
+               -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+          mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+      
+      - name: Download existing yearly files and smart daily sync
+        run: |
+          CURRENT_YEAR=$(date +%Y)
+          echo "Downloading existing yearly files for $CURRENT_YEAR"
+          
+          # Step 1: Download existing yearly files first (fast)
+          if mc ls myminio/dukascopy-node/ohlcv/1Y/ >/dev/null 2>&1; then
+            mc mirror --exclude="*" --include="*/year=$CURRENT_YEAR/*" \
+              myminio/dukascopy-node/ohlcv/1Y/ ohlcv/1Y/
+          else
+            echo "No existing yearly structure found - will create new"
+            mkdir -p ohlcv/1Y
+          fi
+          
+          # Step 2: Smart download for each symbol
+          SYMS=$(yq 'keys | .[]' symbols.yaml | tr -d '"')
+          for SYMBOL in $SYMS; do
+            echo "[INFO] Smart downloading for $SYMBOL"
+            python yearly_consolidation.py --download-only --symbol $SYMBOL
+          done
+      
+      - name: Run consolidation
+        run: |
+          echo "Running yearly consolidation"
+          python yearly_consolidation.py --consolidate-only
+      
+      - name: Upload updated yearly files
+        run: |
+          if [ -d ohlcv/1Y ]; then
+            echo "Uploading updated yearly files to MinIO"
+            mc mirror --overwrite ohlcv/1Y/ myminio/dukascopy-node/ohlcv/1Y/
+          else
+            echo "No yearly files to upload"
+          fi
