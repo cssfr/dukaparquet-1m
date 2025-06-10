@@ -49,4 +49,9 @@ jobs:
           done
       - name: Sync new parquet to MinIO
         run: |
-          mc mirror --overwrite ohlcv/1m/ myminio/dukascopy-node/ohlcv/1m/
+          if [ -d ohlcv/1m ] && [ "$(find ohlcv/1m -name '*.parquet' 2>/dev/null | wc -l)" -gt 0 ]; then
+            echo "Found parquet files to sync"
+            mc mirror --overwrite ohlcv/1m/ myminio/dukascopy-node/ohlcv/1m/
+          else
+            echo "No new parquet files to sync - all symbols up-to-date"
+          fi
