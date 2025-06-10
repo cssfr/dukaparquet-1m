@@ -1,4 +1,4 @@
-name: Dukascopy Backfill
+name: Dukascopy Backfill 1m
 
 on:
   workflow_dispatch:
