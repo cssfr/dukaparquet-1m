@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 
 import subprocess
@@ -8,23 +7,38 @@ import yaml
 import pandas as pd
 import json
 
-OUTPUT_DIR = Path("ohlcv_1m")
+OUTPUT_DIR = Path("ohlcv/1m")
 DOWNLOAD_DIR = Path("download")
 SYMBOLS_FILE = Path("symbols.yaml")
 
 SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
 
-def convert_to_parquet(input_csv_path: str, output_parquet_path: str, symbol: str):
-    df = pd.read_csv(input_csv_path)
+def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: str):
+    df = pd.read_csv(str(input_csv_path))
+    
+    # Define expected schema for comprehensive casting
+    schema_mapping = {
+        'open': 'float64',
+        'high': 'float64', 
+        'low': 'float64',
+        'close': 'float64',
+        'volume': 'float64'
+    }
+    
+    # Apply schema casting for all expected columns
+    for col, dtype in schema_mapping.items():
+        if col in df.columns:
+            df[col] = df[col].astype(dtype)
+    
+    # Ensure UTC, independent of machine timezone
     df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M', utc=True)
     df['unix_time'] = df['timestamp'].astype('int64') // 10**9
-    if 'volume' in df.columns:
-        df['volume'] = df['volume'].astype('float64')
+    
     df.insert(0, 'symbol', symbol)
     cols = df.columns.tolist()
     cols.insert(cols.index('timestamp') + 1, cols.pop(cols.index('unix_time')))
     df = df[cols]
-    df.to_parquet(output_parquet_path, index=False)
+    df.to_parquet(str(output_parquet_path), index=False)
 
 def run_dukascopy(symbol_id: str, date_str: str):
     cmd = [
@@ -41,19 +55,21 @@ def run_dukascopy(symbol_id: str, date_str: str):
     subprocess.run(" ".join(cmd), check=True, shell=True)
 
 def list_parquet_dates_remote(symbol_key: str):
-    # List remote objects and parse dates
+    # List remote objects and parse dates with new structure
     proc = subprocess.run(
-        ["mc", "ls", "--json", f"myminio/dukascopy-node/ohlcv_1m/symbol={symbol_key}/"],
+        ["mc", "ls", "--json", f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol_key}/"],
         capture_output=True, text=True, check=True
     )
     dates = []
     for line in proc.stdout.splitlines():
         obj = json.loads(line)
         key = obj.get("key", "")
+        # New structure: date=YYYY-MM-DD/SYMBOL_YYYY-MM-DD.parquet
         if "date=" in key and key.endswith(".parquet"):
-            part = key.split("date=")[1].split(".")[0]
+            # Extract date from path like "date=2017-05-08/BTC_2017-05-08.parquet"
+            date_part = key.split("date=")[1].split("/")[0]
             try:
-                dates.append(datetime.strptime(part, "%Y-%m-%d").date())
+                dates.append(datetime.strptime(date_part, "%Y-%m-%d").date())
             except ValueError:
                 pass
     return dates
@@ -67,7 +83,9 @@ def ingest_symbol_backfill(symbol_key: str, earliest_required: date, earliest_av
     while current < earliest_available:
         date_str = current.strftime("%Y-%m-%d")
         next_day_str = (current + timedelta(days=1)).strftime("%Y-%m-%d")
-        parquet_path = OUTPUT_DIR / f"symbol={symbol_key}" / f"date={date_str}.parquet"
+        
+        # New path structure: ohlcv/1m/symbol=BTC/date=2017-05-08/BTC_2017-05-08.parquet
+        parquet_path = OUTPUT_DIR / f"symbol={symbol_key}" / f"date={date_str}" / f"{symbol_key}_{date_str}.parquet"
 
         if parquet_path.exists():
             current += timedelta(days=1)
@@ -79,7 +97,7 @@ def ingest_symbol_backfill(symbol_key: str, earliest_required: date, earliest_av
             csv_path = DOWNLOAD_DIR / csv_name
             if csv_path.exists():
                 parquet_path.parent.mkdir(parents=True, exist_ok=True)
-                convert_to_parquet(str(csv_path), str(parquet_path), symbol_key)
+                convert_to_parquet(csv_path, parquet_path, symbol_key)
                 print(f"[{symbol_key}] ✔ backfilled {date_str}")
             else:
                 print(f"[{symbol_key}] ❌ CSV not found for {date_str}")

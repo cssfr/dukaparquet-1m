@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Daily gap‑filling Dukascopy ingest utility.
 
-Reads existing parquet files in ./ohlcv_1m (synced from your MinIO bucket),
+Reads existing parquet files in ./ohlcv/1m (synced from your MinIO bucket),
 finds the newest date per symbol, and downloads any missing days up to
 yesterday UTC using dukascopy-node. Converts each day to Parquet with a
 unix_time column and saves it back into the same folder hierarchy.
@@ -24,7 +24,7 @@ import pandas as pd
 # -----------------------------------------------------------------------------
 #  Paths & config
 # -----------------------------------------------------------------------------
-OUTPUT_DIR = Path("ohlcv_1m")      # local mirror of your bucket; sync before/after
+OUTPUT_DIR = Path("ohlcv/1m")      # local mirror of your bucket; sync before/after
 DOWNLOAD_DIR = Path("download")    # transient CSVs
 SYMBOLS_FILE = Path("symbols.yaml")
 
@@ -34,20 +34,30 @@ if not SYMBOLS_FILE.exists():
 SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
 
 # -----------------------------------------------------------------------------
-#  Converter (verbatim from original convert_to_parquet.py)
+#  Converter with comprehensive schema definition
 # -----------------------------------------------------------------------------
-def convert_to_parquet(input_csv_path: str, output_parquet_path: str, symbol: str):
-    df = pd.read_csv(input_csv_path)
+def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: str):
+    df = pd.read_csv(str(input_csv_path))
+
+    # Define expected schema for comprehensive casting
+    schema_mapping = {
+        'open': 'float64',
+        'high': 'float64', 
+        'low': 'float64',
+        'close': 'float64',
+        'volume': 'float64'
+    }
+    
+    # Apply schema casting for all expected columns
+    for col, dtype in schema_mapping.items():
+        if col in df.columns:
+            df[col] = df[col].astype(dtype)
 
     # Ensure UTC, independent of machine timezone
     df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M', utc=True)
 
     # Add unix epoch seconds
     df['unix_time'] = df['timestamp'].astype('int64') // 10**9
-
-    # Volume to float64 when present
-    if 'volume' in df.columns:
-        df['volume'] = df['volume'].astype('float64')
 
     # Insert symbol column at position 0
     df.insert(0, 'symbol', symbol)
@@ -57,7 +67,7 @@ def convert_to_parquet(input_csv_path: str, output_parquet_path: str, symbol: st
     cols.insert(cols.index('timestamp') + 1, cols.pop(cols.index('unix_time')))
     df = df[cols]
 
-    df.to_parquet(output_parquet_path, index=False)
+    df.to_parquet(str(output_parquet_path), index=False)
 
 # -----------------------------------------------------------------------------
 #  Downloader (verbatim signature)
@@ -72,19 +82,26 @@ def run_dukascopy(symbol_id: str, date_str: str):
     subprocess.run(cmd, check=True, shell=True)
 
 # -----------------------------------------------------------------------------
-#  Helper – latest ingested day
+#  Helper – latest ingested day with new structure
 # -----------------------------------------------------------------------------
 def newest_parquet_date(symbol_key: str) -> date | None:
     folder = OUTPUT_DIR / f"symbol={symbol_key}"
     if not folder.exists():
         return None
     dates: list[date] = []
-    for p in folder.glob("date=*.parquet"):
-        try:
-            d = datetime.strptime(p.name.split("=")[1].split(".")[0], "%Y-%m-%d").date()
-            dates.append(d)
-        except ValueError:
-            continue
+    
+    # Look for date directories in new structure: date=YYYY-MM-DD/
+    for date_dir in folder.glob("date=*"):
+        if date_dir.is_dir():
+            try:
+                date_str = date_dir.name.split("=")[1]
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                # Verify the parquet file actually exists
+                expected_file = date_dir / f"{symbol_key}_{date_str}.parquet"
+                if expected_file.exists():
+                    dates.append(d)
+            except ValueError:
+                continue
     return max(dates) if dates else None
 
 # -----------------------------------------------------------------------------
@@ -115,7 +132,9 @@ def ingest_symbol(symbol_key: str, start_override: date | None, end_date: date):
     for day in daterange(start_date, end_date):
         date_str = day.strftime("%Y-%m-%d")
         next_day_str = (day + timedelta(days=1)).strftime("%Y-%m-%d")
-        parquet_path = OUTPUT_DIR / f"symbol={symbol_key}" / f"date={date_str}.parquet"
+        
+        # New path structure: ohlcv/1m/symbol=BTC/date=2017-05-08/BTC_2017-05-08.parquet
+        parquet_path = OUTPUT_DIR / f"symbol={symbol_key}" / f"date={date_str}" / f"{symbol_key}_{date_str}.parquet"
 
         if parquet_path.exists():
             print(f"[{symbol_key}] {date_str} already ingested.")
@@ -132,7 +151,7 @@ def ingest_symbol(symbol_key: str, start_override: date | None, end_date: date):
                 continue
 
             parquet_path.parent.mkdir(parents=True, exist_ok=True)
-            convert_to_parquet(str(csv_path), str(parquet_path), symbol_key)
+            convert_to_parquet(csv_path, parquet_path, symbol_key)
             print(f"[{symbol_key}] saved {parquet_path.relative_to(OUTPUT_DIR)}")
             # csv_path.unlink(missing_ok=True)  # uncomment to auto‑delete
         except subprocess.CalledProcessError as e:
