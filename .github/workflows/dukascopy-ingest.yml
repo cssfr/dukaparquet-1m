@@ -55,3 +55,11 @@ jobs:
           else
             echo "No new parquet files to sync - all symbols up-to-date"
           fi
+
+  workflow-keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: liskin/gh-workflow-keepalive@v1.2.1
