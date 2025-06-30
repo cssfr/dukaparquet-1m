@@ -48,6 +48,22 @@ jobs:
           echo "Uploading updated instruments metadata"
           mc cp ./instruments.json myminio/dukascopy-node/metadata/instruments.json
           echo "Metadata update completed"
+      
+      - name: Reload FastAPI Cache
+        run: |
+          echo "Reloading FastAPI cache..."
+          response=$(curl -s -w "%{http_code}" -X POST \
+            "https://your-app-domain.com/api/v1/ohlcv/instruments/reload?api_key=${{ secrets.CACHE_RELOAD_API_KEY }}" \
+            -H "User-Agent: GitHub-Actions-InstrumentUpdate" \
+            -H "Accept: application/json")
+          
+          http_code="${response: -3}"
+          if [ "$http_code" -eq 200 ]; then
+            echo "Cache reload successful"
+          else
+            echo "Cache reload failed with HTTP $http_code"
+            exit 1
+          fi
 
   workflow-keepalive:
     # if: github.event_name == 'schedule'
