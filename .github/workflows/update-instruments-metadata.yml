@@ -53,7 +53,7 @@ jobs:
         run: |
           echo "Reloading FastAPI cache..."
           response=$(curl -s -w "%{http_code}" -X POST \
-            "https://your-app-domain.com/api/v1/ohlcv/instruments/reload?api_key=${{ secrets.CACHE_RELOAD_API_KEY }}" \
+            "https://f-stage.backtesting.theworkpc.com/api/v1/ohlcv/instruments/reload?api_key=${{ secrets.CACHE_RELOAD_API_KEY }}" \
             -H "User-Agent: GitHub-Actions-InstrumentUpdate" \
             -H "Accept: application/json")
           
