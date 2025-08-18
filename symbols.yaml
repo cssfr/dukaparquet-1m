@@ -43,3 +43,8 @@ VIX:
   name: Volatility Index
   earliest_date: '2022-10-06'
   location: USA
+NIKKEI:
+  id: jpnidxjpy
+  name: Japan 225
+  earliest_date: '2022-01-01'
+  location: Japan
