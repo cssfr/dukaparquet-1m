@@ -46,5 +46,5 @@ VIX:
 NIKKEI:
   id: jpnidxjpy
   name: Japan 225
-  earliest_date: '2014-01-01'
+  earliest_date: '2011-09-11'
   location: Japan
