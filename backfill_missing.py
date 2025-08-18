@@ -111,7 +111,11 @@ def main():
         earliest_required = datetime.strptime(SYMBOLS[symbol]["earliest_date"], "%Y-%m-%d").date()
         existing_dates = list_parquet_dates_remote(symbol)
         if not existing_dates:
-            print(f"[{symbol}] No existing parquet; skipping backfill.")
+            # No history yet — backfill everything up to yesterday
+            print(f"[{symbol}] No existing parquet; starting full backfill.")
+            earliest_available = date.today()  # stop at yesterday (current < today)
+            ingest_symbol_backfill(symbol, earliest_required, earliest_available)
+            # print(f"[{symbol}] No existing parquet; skipping backfill.") -- deprecated line
             continue
         earliest_available = min(existing_dates)
         if earliest_required < earliest_available:
