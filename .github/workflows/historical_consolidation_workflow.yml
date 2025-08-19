@@ -36,7 +36,7 @@ jobs:
           echo "Starting historical consolidation..."
           
           # Build command
-          CMD="python historical_consolidation_script.py --consolidate-only"
+          CMD="python historical_consolidation_script.py"
           
           # Add symbol filter if specified
           if [ -n "${{ github.event.inputs.symbol }}" ]; then
