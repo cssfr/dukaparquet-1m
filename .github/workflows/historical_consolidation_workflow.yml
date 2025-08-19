@@ -1,0 +1,64 @@
+name: Historical Yearly Consolidation (Backfill)
+on:
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      symbol:
+        description: 'Symbol to process (leave empty for all symbols)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  historical-consolidation:
+    runs-on: ubuntu-latest
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_KEY:       ${{ secrets.MINIO_KEY }}
+      MINIO_SECRET:    ${{ secrets.MINIO_SECRET }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Report job configuration
+        run: |
+          echo "Symbol: ${{ github.event.inputs.symbol || 'ALL SYMBOLS' }}"
+          echo "Triggered by: ${{ github.actor }}"
+      
+      - name: Install tools and dependencies
+        run: |
+          pip install polars pyarrow pyyaml
+          curl -s https://dl.min.io/client/mc/release/linux-amd64/mc \
+               -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+          mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+      
+      - name: Download symbols configuration
+        run: |
+          echo "Downloading symbols.yaml configuration"
+          mc cp myminio/dukascopy-node/symbols.yaml ./symbols.yaml
+      
+      - name: Run historical yearly consolidation
+        run: |
+          echo "Starting historical consolidation..."
+          
+          # Build command
+          CMD="python historical_yearly_consolidation.py --consolidate-only"
+          
+          # Add symbol filter if specified
+          if [ -n "${{ github.event.inputs.symbol }}" ]; then
+            CMD="$CMD --symbol ${{ github.event.inputs.symbol }}"
+          fi
+          
+          echo "Executing: $CMD"
+          $CMD
+          
+          echo "Historical consolidation completed"
+      
+      - name: Upload consolidated yearly files to MinIO
+        run: |
+          if [ -d "ohlcv/1Y" ]; then
+            echo "Uploading consolidated yearly files to MinIO..."
+            mc mirror ohlcv/1Y/ myminio/dukascopy-node/ohlcv/1Y/ --overwrite
+            echo "Upload completed"
+          else
+            echo "No yearly files to upload"
+          fi
