@@ -34,7 +34,7 @@ jobs:
       - name: Download symbols configuration
         run: |
           echo "Downloading symbols.yaml configuration"
-          mc cp myminio/dukascopy-node/symbols.yaml ./symbols.yaml
+          mc cp myminio/dukascopy-node/metadata/symbols.yaml ./symbols.yaml
       
       - name: Run historical yearly consolidation
         run: |
