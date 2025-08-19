@@ -31,11 +31,6 @@ jobs:
                -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
           mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
       
-      - name: Download symbols configuration
-        run: |
-          echo "Downloading symbols.yaml configuration"
-          mc cp myminio/dukascopy-node/metadata/symbols.yaml ./symbols.yaml
-      
       - name: Run historical yearly consolidation
         run: |
           echo "Starting historical consolidation..."
