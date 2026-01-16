@@ -19,6 +19,11 @@ jobs:
           curl -s https://dl.min.io/client/mc/release/linux-amd64/mc \
                -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
           mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+      - name: Debug endpoint
+        run: |
+          echo "Endpoint starts with: ${MINIO_ENDPOINT:0:30}"
+          echo "Full length: ${#MINIO_ENDPOINT}"
+    
       - name: Run daily_ingest.py (dynamic per-symbol range)
         run: |
           # Read symbols from YAML (newline-safe)
