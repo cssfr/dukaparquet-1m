@@ -195,6 +195,7 @@ def process_symbol_year(symbol: str) -> None:
         dfs = []
         for f in daily_files:
             df = pl.scan_parquet(str(f)).with_columns([
+                pl.col('timestamp').cast(pl.Datetime('us', 'UTC')),  # Normalize timestamp precision
                 pl.col('open').cast(pl.Float64),
                 pl.col('high').cast(pl.Float64),
                 pl.col('low').cast(pl.Float64),
@@ -213,6 +214,7 @@ def process_symbol_year(symbol: str) -> None:
         if dst_file.exists():
             print(f"[{symbol}] Merging with existing yearly data")
             existing_df = pl.scan_parquet(dst_file).with_columns([
+                pl.col('timestamp').cast(pl.Datetime('us', 'UTC')),  # Normalize timestamp precision
                 pl.col('open').cast(pl.Float64),
                 pl.col('high').cast(pl.Float64),
                 pl.col('low').cast(pl.Float64),
