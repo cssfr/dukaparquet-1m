@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Historical yearly consolidation script for backfilled data.
-Consolidates daily 1m files into yearly files from earliest date until previous year (2024).
+Consolidates daily 1m files into yearly files from earliest date until previous year.
 Uses EXACTLY the same logic as yearly_consolidation.py but processes historical years.
 Designed to be run manually once for backfilled historical data.
 """
@@ -20,7 +20,7 @@ SRC_BASE = Path("ohlcv/1m")      # Downloaded daily files
 DST_BASE = Path("ohlcv/1Y")      # Yearly consolidation output
 SYMBOLS_FILE = Path("symbols.yaml")
 CURRENT_YEAR = datetime.now().year
-PREVIOUS_YEAR = CURRENT_YEAR - 1  # 2024
+PREVIOUS_YEAR = CURRENT_YEAR - 1  # Dynamically calculated (2025 in 2026)
 # ─────────────────────────────────────────────────────────────────
 
 def build_date_pattern(start_date: date, end_date: date) -> str:
@@ -198,6 +198,7 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
         dfs = []
         for f in daily_files:
             df = pl.scan_parquet(str(f)).with_columns([
+                pl.col('timestamp').cast(pl.Datetime('us', 'UTC')),  # Normalize timestamp precision
                 pl.col('open').cast(pl.Float64),
                 pl.col('high').cast(pl.Float64),
                 pl.col('low').cast(pl.Float64),
@@ -216,6 +217,7 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
         if dst_file.exists():
             print(f"[{symbol}] Merging with existing yearly data")
             existing_df = pl.scan_parquet(dst_file).with_columns([
+                pl.col('timestamp').cast(pl.Datetime('us', 'UTC')),  # Normalize timestamp precision
                 pl.col('open').cast(pl.Float64),
                 pl.col('high').cast(pl.Float64),
                 pl.col('low').cast(pl.Float64),
