@@ -12,16 +12,44 @@ jobs:
       MINIO_SECRET:    ${{ secrets.MINIO_SECRET }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install Python + node + tools
+      - name: Install MinIO Client
         run: |
+          set -euo pipefail
           pip install pandas pyarrow pyyaml yq
           npm install -g dukascopy-node
-          curl -s https://dl.min.io/client/mc/release/linux-amd64/mc \
-               -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+
+          MC_PATH=/usr/local/bin/mc
+          # Prefer GitHub releases redirect (stable). This will be redirected to the proper binary.
+          MC_URL="https://github.com/minio/mc/releases/latest/download/mc-linux-amd64"
+
+          echo "Downloading mc from $MC_URL"
+          # Use -fL to follow redirects and fail on HTTP errors, add retries
+          curl -fL --retry 3 --retry-delay 2 "$MC_URL" -o "$MC_PATH" \
+            || {
+              echo "[WARN] Primary download failed; attempting fallback to dl.min.io"
+              curl -fL --retry 3 --retry-delay 2 "https://dl.min.io/client/mc/release/linux-amd64/mc" -o "$MC_PATH"
+            }
+
+          chmod +x "$MC_PATH"
+
+          # Quick checks to ensure it is actually a binary and not HTML/text
+          echo "[DEBUG] file output:"
+          file "$MC_PATH" || true
+
+          echo "[DEBUG] first 160 bytes (hexdump):"
+          head -c 160 "$MC_PATH" | hexdump -C | sed -n '1,6p' || true
+
+          if ! "$MC_PATH" --version >/dev/null 2>&1 ; then
+            echo "[ERROR] mc binary invalid or not executable. Dumping first 200 bytes for debugging:"
+            head -c 200 "$MC_PATH" || true
+            exit 1
+          fi
+
+          echo "[INFO] mc installed: $($MC_PATH --version)"
           mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
       - name: Debug endpoint
         run: |
-          echo "Endpoint starts with: ${MINIO_ENDPOINT:0:60}"
+          echo "Endpoint starts with: "+{"${MINIO_ENDPOINT:0:60}"}
           echo "Full length: ${#MINIO_ENDPOINT}"
     
       - name: Run daily_ingest.py (dynamic per-symbol range)
