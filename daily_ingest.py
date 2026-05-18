@@ -33,6 +33,8 @@ if not SYMBOLS_FILE.exists():
     raise SystemExit("symbols.yaml not found. Commit it alongside this script.")
 
 SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
+MAX_DUKASCOPY_RETRIES = 3
+DUKASCOPY_RETRY_DELAY_SECONDS = 20
 
 # -----------------------------------------------------------------------------
 #  Converter with comprehensive schema definition
@@ -79,8 +81,16 @@ def run_dukascopy(symbol_id: str, date_str: str):
         f"npx dukascopy-node -i {symbol_id} -from {date_str} -to {next_day} "
         f"-t m1 -f csv --date-format \"YYYY-MM-DD HH:mm\" -v -fl"
     )
-    print("Running:", cmd)
-    subprocess.run(cmd, check=True, shell=True)
+    for attempt in range(1, MAX_DUKASCOPY_RETRIES + 1):
+        try:
+            print(f"Running attempt {attempt}/{MAX_DUKASCOPY_RETRIES}: {cmd}")
+            subprocess.run(cmd, check=True, shell=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == MAX_DUKASCOPY_RETRIES:
+                raise
+            print(f"dukascopy-node failed on {date_str}: {e}; retrying in {DUKASCOPY_RETRY_DELAY_SECONDS}s")
+            time.sleep(DUKASCOPY_RETRY_DELAY_SECONDS)
 
 # -----------------------------------------------------------------------------
 #  Helper – latest ingested day with new structure

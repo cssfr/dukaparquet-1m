@@ -61,16 +61,42 @@ jobs:
             sleep 30
           done
       
+      - name: Download existing yearly files from MinIO
+        run: |
+          set -euo pipefail
+          mkdir -p ohlcv/1Y
+
+          if [ -n "${{ github.event.inputs.symbol }}" ]; then
+            SYMS="${{ github.event.inputs.symbol }}"
+          else
+            SYMS=$(python - <<'PY'
+          import yaml
+          with open("symbols.yaml", encoding="utf-8") as f:
+              print("\n".join(sorted(yaml.safe_load(f).keys())))
+          PY
+          )
+          fi
+
+          for SYMBOL in $SYMS; do
+            REMOTE_PREFIX="myminio/dukascopy-node/ohlcv/1Y/symbol=$SYMBOL/"
+            if mc ls "$REMOTE_PREFIX" >/dev/null 2>&1; then
+              echo "[INFO] Downloading existing yearlies for $SYMBOL"
+              mkdir -p "ohlcv/1Y/symbol=$SYMBOL"
+              mc mirror --overwrite "$REMOTE_PREFIX" "ohlcv/1Y/symbol=$SYMBOL/"
+            else
+              echo "[INFO] No existing yearlies in MinIO for $SYMBOL"
+            fi
+          done
+
       - name: Run historical yearly consolidation
         run: |
+          set -euo pipefail
           echo "Starting historical consolidation..."
           
-          # Build command
-          CMD="python historical_consolidation_script.py --symbol NIKKEI"
-          
-          # Add symbol filter if specified
           if [ -n "${{ github.event.inputs.symbol }}" ]; then
-            CMD="$CMD --symbol ${{ github.event.inputs.symbol }}"
+            CMD="python historical_consolidation_script.py --symbol ${{ github.event.inputs.symbol }}"
+          else
+            CMD="python historical_consolidation_script.py"
           fi
           
           echo "Executing: $CMD"

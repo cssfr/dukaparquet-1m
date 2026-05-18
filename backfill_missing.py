@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import subprocess
+import time
 from datetime import datetime, timedelta, date
 from pathlib import Path
 import yaml
@@ -13,6 +14,8 @@ DOWNLOAD_DIR = Path("download")
 SYMBOLS_FILE = Path("symbols.yaml")
 
 SYMBOLS = yaml.safe_load(SYMBOLS_FILE.read_text())
+MAX_DUKASCOPY_RETRIES = 3
+DUKASCOPY_RETRY_DELAY_SECONDS = 20
 
 def convert_to_parquet(input_csv_path: Path, output_parquet_path: Path, symbol: str):
     df = pd.read_csv(str(input_csv_path))
@@ -53,7 +56,16 @@ def run_dukascopy(symbol_id: str, date_str: str):
         "-v",
         "-fl",
     ]
-    subprocess.run(" ".join(cmd), check=True, shell=True)
+    command = " ".join(cmd)
+    for attempt in range(1, MAX_DUKASCOPY_RETRIES + 1):
+        try:
+            subprocess.run(command, check=True, shell=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == MAX_DUKASCOPY_RETRIES:
+                raise
+            print(f"dukascopy-node failed on {date_str}: {e}; retrying in {DUKASCOPY_RETRY_DELAY_SECONDS}s")
+            time.sleep(DUKASCOPY_RETRY_DELAY_SECONDS)
 
 def list_parquet_dates_remote(symbol_key: str):
     # List remote objects and parse dates with new structure

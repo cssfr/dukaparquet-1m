@@ -2,12 +2,13 @@
 """
 Historical yearly consolidation script for backfilled data.
 Consolidates daily 1m files into yearly files from earliest date until previous year.
-Uses EXACTLY the same logic as yearly_consolidation.py but processes historical years.
+Processes historical years while preserving any existing yearly parquet dates.
 Designed to be run manually once for backfilled historical data.
 """
 
 import os
 import polars as pl
+import json
 import subprocess
 import argparse
 import re
@@ -41,7 +42,7 @@ def build_date_pattern(start_date: date, end_date: date) -> str:
         # Multiple months - use year pattern
         return f"{start_date.year}-*"
 
-def smart_download_for_symbol(symbol: str, target_year: int) -> None:
+def _legacy_smart_download_for_symbol(symbol: str, target_year: int) -> None:
     """Smart download: read yearly file, determine needed range, download only required daily files"""
     
     # Setup paths
@@ -137,12 +138,100 @@ def get_last_consolidated_date(yearly_file_path: Path) -> date | None:
         print(f"Warning: Could not read last date from {yearly_file_path}: {e}")
         return None
 
-def get_daily_files_to_process(symbol: str, target_year: int, start_date: date | None = None) -> list[Path]:
+def list_minio_daily_dates_for_symbol_year(symbol: str, target_year: int) -> set[date]:
+    """List daily parquet dates available in MinIO for a symbol/year."""
+    path_pattern = f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol}/"
+    result = subprocess.run(
+        ["mc", "ls", "--json", path_pattern],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"[{symbol}] Failed to list daily data in MinIO for {target_year}: {result.stderr.strip()}")
+
+    available_dates: set[date] = set()
+    for line in result.stdout.splitlines():
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        key = obj.get("key", "")
+        match = re.search(r"date=(\d{4}-\d{2}-\d{2})/?$", key)
+        if not match:
+            continue
+
+        file_date = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        if file_date.year == target_year:
+            available_dates.add(file_date)
+
+    return available_dates
+
+def get_dates_in_yearly(yearly_file_path: Path) -> set[date]:
+    """Read all dates already present in an existing yearly parquet file."""
+    if not yearly_file_path.exists():
+        return set()
+
+    try:
+        df = (
+            pl.scan_parquet(yearly_file_path)
+            .select(pl.col("timestamp").cast(pl.Datetime("us", "UTC")).dt.date().alias("date"))
+            .unique()
+            .collect()
+        )
+    except Exception as e:
+        raise RuntimeError(f"Could not read existing yearly file {yearly_file_path}: {e}") from e
+
+    if df.is_empty():
+        return set()
+
+    return set(df["date"].to_list())
+
+def smart_download_for_symbol(symbol: str, target_year: int) -> None:
+    """Download only daily files not already represented in the local yearly file."""
+    dst_dir = DST_BASE / f"symbol={symbol}" / f"year={target_year}"
+    dst_file = dst_dir / f"{symbol}_{target_year}.parquet"
+
+    dates_in_yearly = get_dates_in_yearly(dst_file)
+    dailies_in_minio = list_minio_daily_dates_for_symbol_year(symbol, target_year)
+    end_date = min(date.today(), date(target_year, 12, 31))
+    missing_dates = sorted(d for d in (dailies_in_minio - dates_in_yearly) if d <= end_date)
+
+    if not missing_dates:
+        print(f"[{symbol}] {target_year}: yearly already covers all available daily files")
+        return
+
+    print(f"[{symbol}] {target_year}: downloading {len(missing_dates)} missing daily files")
+
+    files_copied = 0
+    for file_date in missing_dates:
+        date_str = file_date.strftime("%Y-%m-%d")
+        src_path = f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol}/date={date_str}/{symbol}_{date_str}.parquet"
+        local_dir = SRC_BASE / f"symbol={symbol}" / f"date={date_str}"
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        copy_result = subprocess.run(
+            ["mc", "cp", src_path, f"{local_dir}/"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if copy_result.returncode != 0:
+            raise RuntimeError(f"[{symbol}] Failed to copy {date_str}: {copy_result.stderr.strip()}")
+
+        files_copied += 1
+        print(f"[{symbol}] Downloaded {date_str}")
+
+    print(f"[{symbol}] Smart download completed: {files_copied} files copied")
+
+def get_daily_files_to_process(symbol: str, target_year: int, skip_dates: set[date] | None = None) -> list[Path]:
     """Get list of daily files that need to be processed for this symbol"""
     symbol_dir = SRC_BASE / f"symbol={symbol}"
     if not symbol_dir.exists():
         return []
     
+    skip_dates = skip_dates or set()
     daily_files = []
     
     # Get all date directories for target year - SAME PATTERN AS ORIGINAL
@@ -155,8 +244,8 @@ def get_daily_files_to_process(symbol: str, target_year: int, start_date: date |
             date_str = date_dir.name.split("=")[1]
             file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             
-            # Only include files after start_date - SAME LOGIC AS ORIGINAL
-            if start_date is None or file_date > start_date:
+            # Include backfilled dates before the yearly max if they are not already represented.
+            if file_date not in skip_dates:
                 expected_file = date_dir / f"{symbol}_{date_str}.parquet"
                 if expected_file.exists():
                     daily_files.append(expected_file)
@@ -175,26 +264,26 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
     dst_dir.mkdir(parents=True, exist_ok=True)
     
     # Check existing yearly file
-    last_consolidated_date = get_last_consolidated_date(dst_file)
+    dates_in_yearly = get_dates_in_yearly(dst_file)
     
     # Get daily files that need processing
-    daily_files = get_daily_files_to_process(symbol, target_year, last_consolidated_date)
+    daily_files = get_daily_files_to_process(symbol, target_year, dates_in_yearly)
     
     if not daily_files:
-        if last_consolidated_date:
-            print(f"[{symbol}] No new daily files since {last_consolidated_date}")
+        if dates_in_yearly:
+            print(f"[{symbol}] No daily files missing from existing {target_year} yearly file")
         else:
             print(f"[{symbol}] No daily files found for {target_year}")
         return
     
     print(f"[{symbol}] Processing {len(daily_files)} daily files for {target_year}")
-    if last_consolidated_date:
-        print(f"[{symbol}] Incremental update from {last_consolidated_date}")
+    if dates_in_yearly:
+        print(f"[{symbol}] Updating existing yearly file with missing dates")
     else:
         print(f"[{symbol}] Creating new yearly file")
     
     try:
-        # Read and combine all daily files with schema casting - IDENTICAL TO ORIGINAL
+        # Read and combine all daily files with schema casting.
         dfs = []
         for f in daily_files:
             df = pl.scan_parquet(str(f)).with_columns([
@@ -213,7 +302,7 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
             
         new_data = pl.concat(dfs)
         
-        # If yearly file exists, merge with existing data - IDENTICAL TO ORIGINAL
+        # If yearly file exists, merge with existing data.
         if dst_file.exists():
             print(f"[{symbol}] Merging with existing yearly data")
             existing_df = pl.scan_parquet(dst_file).with_columns([
@@ -228,12 +317,27 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
         else:
             combined_df = new_data
         
-        # Sort, deduplicate and save - IDENTICAL TO ORIGINAL
+        # Sort, deduplicate and save.
         print(f"[{symbol}] Sorting and deduplicating data")
         final_df = (combined_df
                    .sort('timestamp')
                    .unique()
                    .collect())
+
+        if dates_in_yearly:
+            final_dates = set(
+                final_df
+                .select(pl.col("timestamp").cast(pl.Datetime("us", "UTC")).dt.date().alias("date"))
+                .unique()["date"]
+                .to_list()
+            )
+            lost_dates = dates_in_yearly - final_dates
+            if lost_dates:
+                sample = sorted(lost_dates)[:5]
+                raise RuntimeError(
+                    f"Refusing to write {dst_file}; would drop {len(lost_dates)} existing date(s), "
+                    f"for example {sample}"
+                )
         
         final_df.write_parquet(dst_file)
         
@@ -242,6 +346,7 @@ def process_symbol_year(symbol: str, target_year: int) -> None:
         
     except Exception as e:
         print(f"❌ [{symbol}] Error processing: {str(e)}")
+        raise
 
 def run_mc_command(cmd: str) -> str:
     """Run MinIO client command and return output"""
@@ -378,6 +483,8 @@ def main():
         print(f"Errors: {errors}")
         if DST_BASE.exists():
             print(f"Output location: {DST_BASE}")
+        if errors:
+            raise SystemExit(1)
     
     else:
         # Legacy mode: do both download and consolidation
@@ -423,6 +530,8 @@ def main():
         print(f"Errors: {errors}")
         if DST_BASE.exists():
             print(f"Output location: {DST_BASE}")
+        if errors:
+            raise SystemExit(1)
 
 if __name__ == "__main__":
     main()
