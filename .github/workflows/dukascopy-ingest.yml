@@ -3,6 +3,22 @@ on:
   schedule:
     - cron: '30 1 * * *'    # Every day at 01:30 UTC
   workflow_dispatch:
+    inputs:
+      from_date:
+        description: 'Manual start date YYYY-MM-DD (leave empty for normal gap-fill)'
+        required: false
+        default: ''
+        type: string
+      to_date:
+        description: 'Manual end date YYYY-MM-DD (leave empty for yesterday UTC)'
+        required: false
+        default: ''
+        type: string
+      symbols:
+        description: 'Comma-separated symbols (leave empty for all)'
+        required: false
+        default: ''
+        type: string
 jobs:
   ingest:
     runs-on: ubuntu-latest
@@ -46,7 +62,18 @@ jobs:
           fi
 
           echo "[INFO] mc installed: $($MC_PATH --version)"
-          mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"
+          for i in 1 2 3 4 5; do
+            if mc alias set myminio "$MINIO_ENDPOINT" "$MINIO_KEY" "$MINIO_SECRET"; then
+              echo "[INFO] mc alias set succeeded (attempt $i)"
+              break
+            fi
+            if [ $i -eq 5 ]; then
+              echo "[ERROR] mc alias set failed after 5 attempts"
+              exit 1
+            fi
+            echo "[WARN] mc alias set failed (attempt $i/5), retrying in 30s"
+            sleep 30
+          done
       - name: Debug endpoint
         run: |
           echo "Endpoint starts with: "+{"${MINIO_ENDPOINT:0:60}"}
@@ -55,7 +82,25 @@ jobs:
       - name: Run daily_ingest.py (dynamic per-symbol range)
         run: |
           # Read symbols from YAML (newline-safe)
-          SYMS=$(yq 'keys | .[]' symbols.yaml | tr -d '"')
+          if [ -n "${{ github.event.inputs.symbols }}" ]; then
+            SYMS=$(echo "${{ github.event.inputs.symbols }}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          else
+            SYMS=$(yq 'keys | .[]' symbols.yaml | tr -d '"')
+          fi
+
+          if [ -n "${{ github.event.inputs.from_date }}" ]; then
+            RANGE_ARGS="--from ${{ github.event.inputs.from_date }}"
+            if [ -n "${{ github.event.inputs.to_date }}" ]; then
+              RANGE_ARGS="$RANGE_ARGS --to ${{ github.event.inputs.to_date }}"
+            fi
+
+            for SYMBOL in $SYMS; do
+              echo "[INFO] Manual ingest for $SYMBOL with range: $RANGE_ARGS"
+              python daily_ingest.py --symbols "$SYMBOL" $RANGE_ARGS
+            done
+            exit 0
+          fi
+
           for SYMBOL in $SYMS; do
             # Get the newest date directory in MinIO for this symbol (new structure)
             LAST_DIR=$(mc ls --json myminio/dukascopy-node/ohlcv/1m/symbol=$SYMBOL/ \
