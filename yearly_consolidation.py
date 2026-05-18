@@ -20,6 +20,12 @@ SYMBOLS_FILE = Path("symbols.yaml")
 CURRENT_YEAR = datetime.now().year
 # ─────────────────────────────────────────────────────────────────
 
+def parse_date(value: str | None) -> date | None:
+    """Parse an optional YYYY-MM-DD date."""
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
 def build_date_pattern(start_date: date, end_date: date) -> str:
     """Build MinIO include pattern for date range"""
     if start_date.year != end_date.year:
@@ -38,7 +44,11 @@ def build_date_pattern(start_date: date, end_date: date) -> str:
         # Multiple months - use year pattern
         return f"{start_date.year}-*"
 
-def smart_download_for_symbol(symbol: str) -> None:
+def smart_download_for_symbol(
+    symbol: str,
+    refresh_from: date | None = None,
+    refresh_to: date | None = None,
+) -> None:
     """Smart download: read yearly file, determine needed range, download only required daily files"""
     
     # Setup paths
@@ -49,7 +59,10 @@ def smart_download_for_symbol(symbol: str) -> None:
     last_consolidated_date = get_last_consolidated_date(dst_file)
     
     # Calculate date range to download
-    if last_consolidated_date:
+    if refresh_from:
+        start_date = refresh_from
+        print(f"[{symbol}] Refresh requested from {start_date}")
+    elif last_consolidated_date:
         start_date = last_consolidated_date + timedelta(days=1)
         print(f"[{symbol}] Last consolidated: {last_consolidated_date}, downloading from {start_date}")
     else:
@@ -57,7 +70,7 @@ def smart_download_for_symbol(symbol: str) -> None:
         print(f"[{symbol}] No yearly file found, downloading entire {CURRENT_YEAR}")
     
     # Don't download future dates
-    end_date = min(date.today(), date(CURRENT_YEAR, 12, 31))
+    end_date = min(refresh_to or date.today(), date(CURRENT_YEAR, 12, 31))
     
     if start_date > end_date:
         print(f"[{symbol}] Already up-to-date (last: {last_consolidated_date})")
@@ -134,7 +147,12 @@ def get_last_consolidated_date(yearly_file_path: Path) -> date | None:
         print(f"Warning: Could not read last date from {yearly_file_path}: {e}")
         return None
 
-def get_daily_files_to_process(symbol: str, start_date: date | None = None) -> list[Path]:
+def get_daily_files_to_process(
+    symbol: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    include_start: bool = False,
+) -> list[Path]:
     """Get list of daily files that need to be processed for this symbol"""
     symbol_dir = SRC_BASE / f"symbol={symbol}"
     if not symbol_dir.exists():
@@ -152,8 +170,14 @@ def get_daily_files_to_process(symbol: str, start_date: date | None = None) -> l
             date_str = date_dir.name.split("=")[1]
             file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             
-            # Only include files after start_date
-            if start_date is None or file_date > start_date:
+            # Only include incremental files after start_date, or refresh files from start_date onward.
+            after_start = (
+                start_date is None
+                or file_date > start_date
+                or (include_start and file_date >= start_date)
+            )
+            before_end = end_date is None or file_date <= end_date
+            if after_start and before_end:
                 expected_file = date_dir / f"{symbol}_{date_str}.parquet"
                 if expected_file.exists():
                     daily_files.append(expected_file)
@@ -163,7 +187,11 @@ def get_daily_files_to_process(symbol: str, start_date: date | None = None) -> l
     
     return sorted(daily_files)
 
-def process_symbol_year(symbol: str) -> None:
+def process_symbol_year(
+    symbol: str,
+    refresh_from: date | None = None,
+    refresh_to: date | None = None,
+) -> None:
     """Consolidate daily files into yearly file for given symbol"""
     
     # Setup paths
@@ -175,7 +203,15 @@ def process_symbol_year(symbol: str) -> None:
     last_consolidated_date = get_last_consolidated_date(dst_file)
     
     # Get daily files that need processing
-    daily_files = get_daily_files_to_process(symbol, last_consolidated_date)
+    if refresh_from:
+        daily_files = get_daily_files_to_process(
+            symbol,
+            refresh_from,
+            refresh_to,
+            include_start=True,
+        )
+    else:
+        daily_files = get_daily_files_to_process(symbol, last_consolidated_date)
     
     if not daily_files:
         if last_consolidated_date:
@@ -185,7 +221,9 @@ def process_symbol_year(symbol: str) -> None:
         return
     
     print(f"[{symbol}] Processing {len(daily_files)} daily files for {CURRENT_YEAR}")
-    if last_consolidated_date:
+    if refresh_from:
+        print(f"[{symbol}] Refresh update from {refresh_from} to {refresh_to or date.today()}")
+    elif last_consolidated_date:
         print(f"[{symbol}] Incremental update from {last_consolidated_date}")
     else:
         print(f"[{symbol}] Creating new yearly file")
@@ -221,6 +259,12 @@ def process_symbol_year(symbol: str) -> None:
                 pl.col('close').cast(pl.Float64),
                 pl.col('volume').cast(pl.Float64)
             ])
+            if refresh_from:
+                window_end = refresh_to or date.today()
+                existing_df = existing_df.filter(
+                    (pl.col("timestamp").dt.date() < refresh_from)
+                    | (pl.col("timestamp").dt.date() > window_end)
+                )
             combined_df = pl.concat([existing_df, new_data])
         else:
             combined_df = new_data
@@ -245,13 +289,23 @@ def main():
     parser.add_argument("--download-only", action="store_true", help="Only perform smart download")
     parser.add_argument("--consolidate-only", action="store_true", help="Only perform consolidation")
     parser.add_argument("--symbol", help="Symbol to process (for download-only mode)")
+    parser.add_argument("--refresh-from", help="Reprocess current-year daily files from YYYY-MM-DD")
+    parser.add_argument("--refresh-to", help="Reprocess current-year daily files through YYYY-MM-DD")
     
     args = parser.parse_args()
+    refresh_from = parse_date(args.refresh_from)
+    refresh_to = parse_date(args.refresh_to)
+    if refresh_from and refresh_from.year != CURRENT_YEAR:
+        raise SystemExit(f"--refresh-from must be in {CURRENT_YEAR}")
+    if refresh_to and refresh_to.year != CURRENT_YEAR:
+        raise SystemExit(f"--refresh-to must be in {CURRENT_YEAR}")
+    if refresh_from and refresh_to and refresh_from > refresh_to:
+        raise SystemExit("--refresh-from must be before or equal to --refresh-to")
     
     if args.download_only:
         if not args.symbol:
             raise SystemExit("--symbol required with --download-only")
-        smart_download_for_symbol(args.symbol)
+        smart_download_for_symbol(args.symbol, refresh_from, refresh_to)
         return
     
     if not SYMBOLS_FILE.exists():
@@ -279,7 +333,7 @@ def main():
         
         for symbol in sorted(symbols.keys()):
             try:
-                process_symbol_year(symbol)
+                process_symbol_year(symbol, refresh_from, refresh_to)
                 processed += 1
             except Exception as e:
                 print(f"❌ Error processing symbol {symbol}: {str(e)}")
@@ -305,8 +359,8 @@ def main():
         for symbol in sorted(symbols.keys()):
             try:
                 print(f"\n[{symbol}] Starting smart download and consolidation")
-                smart_download_for_symbol(symbol)
-                process_symbol_year(symbol)
+                smart_download_for_symbol(symbol, refresh_from, refresh_to)
+                process_symbol_year(symbol, refresh_from, refresh_to)
                 processed += 1
             except Exception as e:
                 print(f"❌ Error processing symbol {symbol}: {str(e)}")
