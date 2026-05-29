@@ -81,6 +81,23 @@ jobs:
         run: |
           CURRENT_YEAR=$(date +%Y)
           echo "Downloading existing yearly files for $CURRENT_YEAR"
+
+          mc_retry() {
+            local attempt
+            local max_attempts=4
+            local delay_seconds=15
+            for attempt in $(seq 1 "$max_attempts"); do
+              if mc "$@"; then
+                return 0
+              fi
+              local status=$?
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                return "$status"
+              fi
+              echo "[WARN] mc $* failed on attempt $attempt/$max_attempts; retrying in ${delay_seconds}s" >&2
+              sleep "$delay_seconds"
+            done
+          }
           
           # Step 1: Download existing yearly files for current year only
           if [ -n "${{ github.event.inputs.symbols }}" ]; then
@@ -102,13 +119,21 @@ jobs:
           for SYMBOL in $SYMS; do
             # Check if yearly file exists for this symbol and current year
             YEARLY_PATH="myminio/dukascopy-node/ohlcv/1Y/symbol=$SYMBOL/year=$CURRENT_YEAR/${SYMBOL}_${CURRENT_YEAR}.parquet"
-            if mc stat "$YEARLY_PATH" >/dev/null 2>&1; then
+            STAT_LOG=$(mktemp)
+            if mc_retry stat "$YEARLY_PATH" >/dev/null 2>"$STAT_LOG"; then
               echo "[INFO] Downloading existing yearly file for $SYMBOL"
               LOCAL_DIR="ohlcv/1Y/symbol=$SYMBOL/year=$CURRENT_YEAR"
               mkdir -p "$LOCAL_DIR"
-              mc cp "$YEARLY_PATH" "$LOCAL_DIR/"
+              mc_retry cp "$YEARLY_PATH" "$LOCAL_DIR/"
             else
-              echo "[INFO] No existing yearly file for $SYMBOL - will create new"
+              STAT_OUTPUT=$(cat "$STAT_LOG")
+              if echo "$STAT_OUTPUT" | grep -Eiq 'not found|does not exist|no such key|NoSuchKey|specified key does not exist'; then
+                echo "[INFO] No existing yearly file for $SYMBOL - will create new"
+              else
+                echo "[ERROR] Could not stat existing yearly file for $SYMBOL: $YEARLY_PATH"
+                cat "$STAT_LOG"
+                exit 1
+              fi
             fi
           done
           
@@ -132,9 +157,26 @@ jobs:
       
       - name: Upload updated yearly files
         run: |
+          mc_retry() {
+            local attempt
+            local max_attempts=4
+            local delay_seconds=15
+            for attempt in $(seq 1 "$max_attempts"); do
+              if mc "$@"; then
+                return 0
+              fi
+              local status=$?
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                return "$status"
+              fi
+              echo "[WARN] mc $* failed on attempt $attempt/$max_attempts; retrying in ${delay_seconds}s" >&2
+              sleep "$delay_seconds"
+            done
+          }
+
           if [ -d ohlcv/1Y ]; then
             echo "Uploading updated yearly files to MinIO"
-            mc mirror --overwrite ohlcv/1Y/ myminio/dukascopy-node/ohlcv/1Y/
+            mc_retry mirror --overwrite ohlcv/1Y/ myminio/dukascopy-node/ohlcv/1Y/
           else
             echo "No yearly files to upload"
           fi

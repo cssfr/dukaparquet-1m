@@ -9,6 +9,7 @@ import os
 import polars as pl
 import subprocess
 import argparse
+import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import yaml
@@ -18,7 +19,41 @@ SRC_BASE = Path("ohlcv/1m")      # Downloaded daily files
 DST_BASE = Path("ohlcv/1Y")      # Yearly consolidation output
 SYMBOLS_FILE = Path("symbols.yaml")
 CURRENT_YEAR = datetime.now().year
+MINIO_RETRY_ATTEMPTS = 4
+MINIO_RETRY_DELAY_SECONDS = 15
 # ─────────────────────────────────────────────────────────────────
+
+def is_missing_object_error(stderr: str) -> bool:
+    """Return True when mc reports a missing object, not a transient failure."""
+    message = stderr.lower()
+    missing_markers = [
+        "not found",
+        "does not exist",
+        "no such key",
+        "nosuchkey",
+        "the specified key does not exist",
+    ]
+    return any(marker in message for marker in missing_markers)
+
+def run_minio_command(cmd: list[str], label: str) -> subprocess.CompletedProcess:
+    """Run an mc command with retries for transient network/storage failures."""
+    last_result: subprocess.CompletedProcess | None = None
+    for attempt in range(1, MINIO_RETRY_ATTEMPTS + 1):
+        last_result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if last_result.returncode == 0:
+            return last_result
+
+        if attempt == MINIO_RETRY_ATTEMPTS:
+            return last_result
+
+        stderr = last_result.stderr.strip()
+        print(
+            f"[WARN] {label} failed on attempt {attempt}/{MINIO_RETRY_ATTEMPTS}: "
+            f"{stderr}; retrying in {MINIO_RETRY_DELAY_SECONDS}s"
+        )
+        time.sleep(MINIO_RETRY_DELAY_SECONDS)
+
+    raise RuntimeError(f"{label} failed without a result")
 
 def parse_date(value: str | None) -> date | None:
     """Parse an optional YYYY-MM-DD date."""
@@ -44,7 +79,7 @@ def build_date_pattern(start_date: date, end_date: date) -> str:
         # Multiple months - use year pattern
         return f"{start_date.year}-*"
 
-def smart_download_for_symbol(
+def _legacy_smart_download_for_symbol(
     symbol: str,
     refresh_from: date | None = None,
     refresh_to: date | None = None,
@@ -106,15 +141,17 @@ def smart_download_for_symbol(
             src_path = f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol}/date={date_str}/{symbol}_{date_str}.parquet"
             dst_dir = f"ohlcv/1m/symbol={symbol}/date={date_str}"
             
-            # Check if file exists and copy it
-            check_cmd = ["mc", "stat", src_path]
-            check_result = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
+            check_result = run_minio_command(
+                ["mc", "stat", src_path],
+                f"[{symbol}] stat {date_str}",
+            )
             
             if check_result.returncode == 0:
-                # File exists, copy it
-                subprocess.run(["mkdir", "-p", dst_dir], check=False)
-                copy_cmd = ["mc", "cp", src_path, f"{dst_dir}/"]
-                copy_result = subprocess.run(copy_cmd, capture_output=True, text=True, check=False)
+                Path(dst_dir).mkdir(parents=True, exist_ok=True)
+                copy_result = run_minio_command(
+                    ["mc", "cp", src_path, f"{dst_dir}/"],
+                    f"[{symbol}] copy {date_str}",
+                )
                 if copy_result.returncode == 0:
                     files_copied += 1
                     print(f"[{symbol}] ✓ Downloaded {date_str}")
@@ -127,6 +164,68 @@ def smart_download_for_symbol(
             
     except Exception as e:
         print(f"[{symbol}] ❌ Download error: {str(e)}")
+
+def smart_download_for_symbol(
+    symbol: str,
+    refresh_from: date | None = None,
+    refresh_to: date | None = None,
+) -> None:
+    """Download required current-year daily files, retrying transient mc failures."""
+    dst_dir = DST_BASE / f"symbol={symbol}" / f"year={CURRENT_YEAR}"
+    dst_file = dst_dir / f"{symbol}_{CURRENT_YEAR}.parquet"
+
+    last_consolidated_date = get_last_consolidated_date(dst_file)
+
+    if refresh_from:
+        start_date = refresh_from
+        print(f"[{symbol}] Refresh requested from {start_date}")
+    elif last_consolidated_date:
+        start_date = last_consolidated_date + timedelta(days=1)
+        print(f"[{symbol}] Last consolidated: {last_consolidated_date}, downloading from {start_date}")
+    else:
+        start_date = date(CURRENT_YEAR, 1, 1)
+        print(f"[{symbol}] No yearly file found, downloading entire {CURRENT_YEAR}")
+
+    end_date = min(refresh_to or date.today(), date(CURRENT_YEAR, 12, 31))
+    if start_date > end_date:
+        print(f"[{symbol}] Already up-to-date (last: {last_consolidated_date})")
+        return
+
+    date_pattern = build_date_pattern(start_date, end_date)
+    include_pattern = f"symbol={symbol}/date={date_pattern}/*"
+    print(f"[{symbol}] Downloading pattern: {include_pattern}")
+    print(f"[{symbol}] Using mc cp for specific date range: {date_pattern}")
+
+    current_date = start_date
+    files_copied = 0
+    while current_date <= end_date:
+        date_str = current_date.strftime("%Y-%m-%d")
+        src_path = f"myminio/dukascopy-node/ohlcv/1m/symbol={symbol}/date={date_str}/{symbol}_{date_str}.parquet"
+        local_dir = SRC_BASE / f"symbol={symbol}" / f"date={date_str}"
+
+        check_result = run_minio_command(
+            ["mc", "stat", src_path],
+            f"[{symbol}] stat {date_str}",
+        )
+        if check_result.returncode == 0:
+            local_dir.mkdir(parents=True, exist_ok=True)
+            copy_result = run_minio_command(
+                ["mc", "cp", src_path, f"{local_dir}/"],
+                f"[{symbol}] copy {date_str}",
+            )
+            if copy_result.returncode != 0:
+                raise RuntimeError(f"[{symbol}] Failed to copy {date_str}: {copy_result.stderr.strip()}")
+
+            files_copied += 1
+            print(f"[{symbol}] Downloaded {date_str}")
+        elif is_missing_object_error(check_result.stderr):
+            print(f"[{symbol}] No daily file found for {date_str}; skipping")
+        else:
+            raise RuntimeError(f"[{symbol}] Failed to stat {date_str}: {check_result.stderr.strip()}")
+
+        current_date += timedelta(days=1)
+
+    print(f"[{symbol}] Smart download completed: {files_copied} files copied")
 
 def get_last_consolidated_date(yearly_file_path: Path) -> date | None:
     """Get the last date from existing yearly file"""
